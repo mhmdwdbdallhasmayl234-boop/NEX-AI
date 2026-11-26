@@ -19,29 +19,18 @@ function corsHeaders(request) {
   };
 }
 
-function extractText(payload) {
-  if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text.trim();
-  const pieces = [];
-  for (const step of payload?.steps || []) {
-    if (step?.type !== "model_output") continue;
-    for (const part of step?.content || []) if (part?.type === "text" && part.text) pieces.push(part.text);
-  }
-  return pieces.join("\n").trim();
+function getAnswer(payload) {
+  return (payload?.candidates?.[0]?.content?.parts || [])
+    .filter(part => typeof part.text === "string")
+    .map(part => part.text)
+    .join("\n").trim();
 }
 
-function extractCitations(payload) {
-  const found = [];
-  for (const step of payload?.steps || []) {
-    if (step?.type !== "model_output") continue;
-    for (const part of step?.content || []) {
-      for (const annotation of part?.annotations || []) {
-        if (annotation?.type === "url_citation" && annotation.url) {
-          found.push({ title: annotation.title || annotation.url, url: annotation.url });
-        }
-      }
-    }
-  }
-  return [...new Map(found.map(item => [item.url, item])).values()].slice(0, 8);
+function getCitations(payload) {
+  const chunks = payload?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+  const refs = chunks.map(chunk => chunk.web).filter(web => web?.uri)
+    .map(web => ({ title: web.title || web.uri, url: web.uri }));
+  return [...new Map(refs.map(ref => [ref.url, ref])).values()].slice(0, 8);
 }
 
 export default {
@@ -64,31 +53,55 @@ export default {
       if (message.length > 12000) return json({ error: "الرسالة طويلة جداً. اختصرها قليلاً." }, 413, cors);
 
       const history = Array.isArray(body?.history) ? body.history.slice(-12) : [];
-      const transcript = history
+      const contents = history
         .filter(item => item && ["user", "assistant"].includes(item.role) && typeof item.content === "string")
-        .map(item => (item.role === "user" ? "المستخدم" : "NEX AI") + ": " + item.content.slice(0, 5000))
-        .join("\n\n");
-      const input = (transcript ? "سياق المحادثة السابقة:\n" + transcript + "\n\n" : "") + "رسالة المستخدم الحالية:\n" + message;
+        .map(item => ({
+          role: item.role === "assistant" ? "model" : "user",
+          parts: [{ text: item.content.slice(0, 5000) }]
+        }));
+      contents.push({ role: "user", parts: [{ text: message }] });
 
-      const requestBody = { model: MODEL, system_instruction: SYSTEM_INSTRUCTION, input };
-      if (body?.webSearch === true) requestBody.tools = [{ type: "google_search" }];
+      const requestBody = {
+        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+        contents,
+        generationConfig: { maxOutputTokens: 2048 }
+      };
+      if (body?.webSearch === true) requestBody.tools = [{ google_search: {} }];
 
       try {
-        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-          body: JSON.stringify(requestBody)
-        });
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(45000)
+          }
+        );
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
           const providerMessage = payload?.error?.message || "تعذر الاتصال بخدمة Gemini.";
-          return json({ error: providerMessage, providerStatus: response.status }, response.status === 429 ? 429 : 502, cors);
+          return json({
+            error: providerMessage,
+            providerStatus: response.status,
+            hint: response.status === 429 ? "تجاوزت حصة الاستخدام مؤقتاً؛ انتظر قليلاً ثم أعد المحاولة." : undefined
+          }, response.status === 429 ? 429 : 502, cors);
         }
-        const answer = extractText(payload);
-        if (!answer) return json({ error: "وصل رد غير مكتمل من نموذج الذكاء الاصطناعي. حاول مرة أخرى." }, 502, cors);
-        return json({ answer, citations: extractCitations(payload), model: MODEL, interactionId: payload?.id || null }, 200, cors);
-      } catch {
-        return json({ error: "تعذر الوصول إلى خدمة الذكاء الاصطناعي. تحقق من اتصال الإنترنت ثم أعد المحاولة." }, 502, cors);
+        const answer = getAnswer(payload);
+        if (!answer) return json({ error: "لم يُرجع النموذج نصاً. حاول برسالة أقصر." }, 502, cors);
+        return json({
+          answer,
+          citations: getCitations(payload),
+          model: payload?.modelVersion || MODEL,
+          responseId: payload?.responseId || null
+        }, 200, cors);
+      } catch (error) {
+        const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
+        return json({
+          error: timedOut
+            ? "استغرق رد Gemini وقتاً أطول من المعتاد. أعد المحاولة بعد قليل."
+            : "تعذر الوصول إلى خدمة Gemini. تحقق من الإنترنت ثم أعد المحاولة."
+        }, 502, cors);
       }
     }
 
