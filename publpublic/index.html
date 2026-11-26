@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090d18">
+
+  <title>NEX AI - فكّر بلا حدود</title>
+
+  <meta name="description" content="NEX AI مساعدك الذكي للتفكير والتعلم والابتكار.">
+
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/style.css">
+
+</head>
+
+<body>
+
+  <div class="app-container">
+
+    <header class="top-bar">
+
+      <div class="brand">
+        <div class="logo">N</div>
+        <div>
+          <h1>NEX AI</h1>
+          <span>فكّر بلا حدود</span>
+        </div>
+      </div>
+
+      <button id="menuBtn" class="icon-btn" aria-label="القائمة">
+        ☰
+      </button>
+
+    </header>
+
+    <main class="main-content">
+
+      <section id="welcome" class="welcome">
+
+        <div class="welcome-logo">N</div>
+
+        <h2>مرحباً بك في NEX AI</h2>
+
+        <p>
+          مساعدك الذكي للتفكير والتعلم والابتكار.
+          ماذا يدور في ذهنك اليوم؟
+        </p>
+
+        <div class="quick-actions">
+
+          <button class="quick-btn" data-prompt="اشرح لي موضوعاً جديداً">
+            📚 التعلم
+          </button>
+
+          <button class="quick-btn" data-prompt="ساعدني في ابتكار مشروع جديد">
+            💡 الابتكار
+          </button>
+
+          <button class="quick-btn" data-prompt="ساعدني في كتابة كود برمجي">
+            💻 البرمجة
+          </button>
+
+        </div>
+
+      </section>
+
+      <section id="chatMessages" class="chat-messages"></section>
+
+    </main>
+
+    <footer class="input-area">
+
+      <div class="input-box">
+
+        <textarea
+          id="messageInput"
+          placeholder="اكتب رسالتك هنا..."
+          rows="1"
+          aria-label="اكتب رسالتك"
+        ></textarea>
+
+        <button id="sendBtn" aria-label="إرسال الرسالة">
+          ➤
+        </button>
+
+      </div>
+
+      <div class="footer-note">
+        NEX AI · فكّر بلا حدود
+      </div>
+
+    </footer>
+
+  </div>
+
+  <script src="/app.js" defer></script>
+
+</body>
+</html>
