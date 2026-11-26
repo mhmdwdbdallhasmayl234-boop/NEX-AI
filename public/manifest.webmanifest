@@ -1,0 +1,11 @@
+{
+  "name": "NEX AI — فكّر بلا حدود",
+  "short_name": "NEX AI",
+  "description": "مساعدك الذكي باللغة العربية",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090e1b",
+  "theme_color": "#0b1020"
+}
