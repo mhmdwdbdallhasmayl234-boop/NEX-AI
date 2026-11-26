@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="NEX AI — فكّر بلا حدود. مساعدك الذكي باللغة العربية.">
+  <title>NEX AI — فكّر بلا حدود</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><div class="brand-mark">N</div><div><strong>NEX AI</strong><small>فكّر بلا حدود</small></div></div>
+      <button class="new-chat" id="newChat">＋ محادثة جديدة</button>
+      <div class="side-label">مساحة العمل</div>
+      <button class="side-link active">◉　المحادثة</button>
+      <div class="side-note">مساعدك الذكي، من الفكرة إلى الإنجاز.</div>
+      <div class="side-footer"><span class="status-dot"></span> الإصدار التأسيسي</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menuButton" aria-label="القائمة">☰</button>
+        <div class="top-title"><strong>NEX AI</strong><span>مساعدك الذكي</span></div>
+        <div class="top-actions"><span class="online-pill"><i></i> جاهز</span></div>
+      </header>
+
+      <section class="chat-area" id="chatArea">
+        <div class="welcome" id="welcome">
+          <div class="welcome-symbol">N</div>
+          <div class="eyebrow">مرحباً بك في مساحتك الذكية</div>
+          <h1>أهلاً بك في <span>NEX AI</span></h1>
+          <p>فكرتك تستحق أن ترى النور. اسأل، تعلّم، خطّط، وابدأ من هنا.</p>
+          <div class="suggestions">
+            <button class="suggestion" data-prompt="ساعدني أتعلم مهارة تقنية من الصفر بخطة عملية."><b>⌘</b><span>تعلّم مهارة جديدة<small>خطة خطوة بخطوة</small></span>↗</button>
+            <button class="suggestion" data-prompt="اقترح لي أفكار مشاريع تقنية بسيطة وقابلة للتنفيذ بإمكانيات محدودة."><b>✧</b><span>ابتكر مشروعاً<small>أفكار قابلة للتنفيذ</small></span>↗</button>
+            <button class="suggestion" data-prompt="اشرح لي موضوعاً صعباً بطريقة بسيطة مع أمثلة."><b>◈</b><span>افهم موضوعاً<small>شرح واضح وأمثلة</small></span>↗</button>
+            <button class="suggestion" data-prompt="ساعدني أرتب يومي وأحدد أولوياتي."><b>▦</b><span>نظّم وقتك<small>أولويات وخطوات</small></span>↗</button>
+          </div>
+        </div>
+        <div class="messages" id="messages" aria-live="polite"></div>
+      </section>
+
+      <section class="composer-wrap">
+        <div class="composer-tools">
+          <label class="search-toggle"><input type="checkbox" id="webSearch"> <span>بحث الويب</span><small>مصادر أحدث عند الحاجة</small></label>
+          <span class="privacy-note">محادثتك تبدأ هنا</span>
+        </div>
+        <form class="composer" id="chatForm">
+          <textarea id="messageInput" rows="1" maxlength="12000" placeholder="اكتب رسالتك إلى NEX AI..." aria-label="رسالتك"></textarea>
+          <div class="composer-bottom">
+            <span class="hint">Enter للإرسال · Shift + Enter لسطر جديد</span>
+            <div class="composer-actions">
+              <button type="button" class="icon-button" id="voiceButton" title="الإملاء الصوتي" aria-label="الإملاء الصوتي">🎙</button>
+              <button type="submit" class="send-button" id="sendButton"><span>إرسال</span> ↑</button>
+            </div>
+          </div>
+        </form>
+        <p class="disclaimer">قد يخطئ الذكاء الاصطناعي؛ راجع المعلومات المهمة قبل الاعتماد عليها.</p>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
