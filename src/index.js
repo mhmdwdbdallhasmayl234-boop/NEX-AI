@@ -59,8 +59,8 @@ function cleanSearchText(value) {
   return String(value || "").replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'")
     .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&#(\\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/\\s+/g, " ").trim();
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, " ").trim();
 }
 
 async function searchDuckDuckGo(query) {
@@ -72,10 +72,10 @@ async function searchDuckDuckGo(query) {
   if (!response.ok) throw new Error("Search provider status " + response.status);
   const html = await response.text();
   const results = [];
-  const blocks = html.match(/<div[^>]*class="result[^"]*"[^>]*>[\\s\\S]*?<\\/div>\\s*<\\/div>/gi) || [];
+  const blocks = html.match(/<div[^>]*class="result[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/div>/gi) || [];
   for (const block of blocks) {
-    const linkMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\\s\\S]*?)<\\/a>/i);
-    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\\s\\S]*?)<\\/[^>]+>/i);
+    const linkMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/[^>]+>/i);
     if (!linkMatch) continue;
     let link = linkMatch[1].replace(/&amp;/g, "&");
     try {
@@ -83,7 +83,7 @@ async function searchDuckDuckGo(query) {
       const redirected = parsed.searchParams.get("uddg");
       if (redirected) link = redirected;
     } catch {}
-    if (!/^https?:\\/\\//i.test(link)) continue;
+    if (!/^https?:\/\//i.test(link)) continue;
     results.push({ title: cleanSearchText(linkMatch[2]), url: link, snippet: cleanSearchText(snippetMatch?.[1] || "") });
     if (results.length >= 6) break;
   }
@@ -93,13 +93,14 @@ async function searchDuckDuckGo(query) {
 async function answerWithSearchFallback(env, message, history) {
   const results = await searchDuckDuckGo(message);
   if (!results.length) return { ok: false, reason: "لم يعثر محرك البحث البديل على نتائج قابلة للاستخدام." };
-  const sourceText = results.map((r, i) => `${i + 1}. ${r.title}\\n${r.snippet}\\nالرابط: ${r.url}`).join("\\n\\n");
-  const prompt = "أجب عن سؤال المستخدم بالاعتماد على نتائج البحث التالية. لا تضف حقائق غير مدعومة، واذكر الروابط التي اعتمدت عليها في قسم المصادر. إذا كانت النتائج غير كافية فصرّح بذلك.\\n\\nسؤال المستخدم: " + message + "\\n\\nنتائج البحث:\\n" + sourceText;
+  const sourceText = results.map((r, i) => (i + 1) + ". " + r.title + "\n" + r.snippet + "\nالرابط: " + r.url).join("\n\n");
+  const prompt = "أجب عن سؤال المستخدم بالاعتماد على نتائج البحث التالية. لا تضف حقائق غير مدعومة، واذكر الروابط التي اعتمدت عليها في قسم المصادر. إذا كانت النتائج غير كافية فصرّح بذلك.\n\nسؤال المستخدم: " + message + "\n\nنتائج البحث:\n" + sourceText;
   const answer = await callOpenRouter(env, prompt, history);
   if (!answer.ok) return { ok: false, reason: "تعذر توليد إجابة من نتائج البحث." };
   return { ok: true, answer: answer.answer, citations: results.map(r => ({ title: r.title, url: r.url })) };
 }
-\nfunction extractOutput(payload) {
+
+function extractOutput(payload) {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text.trim();
   const texts = [];
   for (const step of payload?.steps || []) {
