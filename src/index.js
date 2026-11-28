@@ -1,4 +1,5 @@
 const MODEL = "gemini-3.8-flash";
+const FAST_MODEL = "gemini-3.1-flash-lite";
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const SYSTEM_INSTRUCTION = `أنت NEX AI، مساعد ذكي عربي موثوق. أجب بلغة المستخدم، وافهم اللهجة السودانية واستخدمها بلطف عندما تناسب السياق.
 كن دقيقاً وواضحاً ومنظماً. لا تخترع معلومات أو مصادر أو روابط. إذا لم تكن متأكداً فقل ذلك بوضوح.
@@ -105,15 +106,18 @@ export default {
           return { response, payload };
         };
 
-        let usedModel = MODEL;
-        let result = await callGemini(MODEL);
+        // Use the low-latency Flash-Lite model for ordinary chat.
+        // Keep the larger model for requests that explicitly ask for web search.
+        let usedModel = body?.webSearch === true ? MODEL : FAST_MODEL;
+        let result = await callGemini(usedModel);
 
         // If the primary model is temporarily overloaded, automatically try the
         // lower-latency Flash-Lite model so the user can still receive an answer.
         if (result.response.status === 503 || result.response.status === 429) {
-          console.warn("NEX primary model busy; trying fallback", result.response.status);
-          usedModel = FALLBACK_MODEL;
-          result = await callGemini(FALLBACK_MODEL);
+          console.warn("NEX selected model busy; trying fallback", result.response.status);
+          const fallback = usedModel === FALLBACK_MODEL ? MODEL : FALLBACK_MODEL;
+          usedModel = fallback;
+          result = await callGemini(fallback);
         }
 
         const { response, payload } = result;
@@ -125,7 +129,7 @@ export default {
             stage: "gemini-provider",
             providerStatus: response.status,
             providerCode: payload?.error?.status || payload?.error?.code || null,
-            attemptedModels: [MODEL, ...(usedModel === FALLBACK_MODEL ? [FALLBACK_MODEL] : [])],
+            attemptedModels: [body?.webSearch === true ? MODEL : FAST_MODEL, ...(usedModel !== (body?.webSearch === true ? MODEL : FAST_MODEL) ? [usedModel] : [])],
             hint: response.status === 503
               ? "خدمة Gemini مشغولة مؤقتاً؛ حاول بعد قليل."
               : response.status === 429
