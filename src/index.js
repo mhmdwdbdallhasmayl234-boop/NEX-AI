@@ -89,7 +89,8 @@ export default {
       return json({
         ok: true, app: "NEX AI", model: MODEL, api: "interactions",
         apiKeyConfigured: Boolean(env.GEMINI_API_KEY),
-        chatRoute: "ready", version: "diagnostic-2026-11-28"
+        openRouterConfigured: Boolean(env.OPENROUTER_API_KEY),
+        chatRoute: "ready", version: "multi-provider-2026-11-28"
       }, 200, cors);
     }
 
