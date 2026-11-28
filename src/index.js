@@ -25,7 +25,7 @@ function extractOutput(payload) {
   for (const step of payload?.steps || []) {
     if (step?.type !== "model_output") continue;
     for (const part of step?.content || []) {
-      if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
+      if (typeof part?.text === "string" && part.text.trim()) texts.push(part.text);
     }
   }
   return texts.join("\n").trim();
@@ -51,13 +51,19 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/api/health" && request.method === "GET") {
-      return json({ ok: true, app: "NEX AI", model: MODEL, api: "interactions", apiKeyConfigured: Boolean(env.GEMINI_API_KEY) }, 200, cors);
+      return json({
+        ok: true, app: "NEX AI", model: MODEL, api: "interactions",
+        apiKeyConfigured: Boolean(env.GEMINI_API_KEY),
+        chatRoute: "ready", version: "diagnostic-2026-11-28"
+      }, 200, cors);
     }
 
     if (url.pathname === "/api/chat" && request.method === "POST") {
-      if (!env.GEMINI_API_KEY) return json({ error: "مفتاح Gemini غير مضبوط في إعدادات الخادم." }, 503, cors);
+      if (!env.GEMINI_API_KEY) return json({ error: "مفتاح Gemini غير مضبوط في إعدادات الخادم.", stage: "configuration" }, 503, cors);
       let body;
-      try { body = await request.json(); } catch { return json({ error: "صيغة الطلب غير صحيحة." }, 400, cors); }
+      try { body = await request.json(); } catch {
+        return json({ error: "صيغة الطلب غير صحيحة.", stage: "request-json" }, 400, cors);
+      }
 
       const message = String(body?.message || "").trim();
       if (!message) return json({ error: "اكتب رسالتك أولاً." }, 400, cors);
@@ -68,11 +74,15 @@ export default {
         .filter(item => item && ["user", "assistant"].includes(item.role) && typeof item.content === "string")
         .map(item => (item.role === "assistant" ? "NEX AI" : "المستخدم") + ": " + item.content.slice(0, 3000))
         .join("\n\n");
-      const input = SYSTEM_INSTRUCTION + "\n\n" +
-        (transcript ? "سياق المحادثة السابقة:\n" + transcript + "\n\n" : "") +
+      const input = (transcript ? "سياق المحادثة السابقة:\n" + transcript + "\n\n" : "") +
         "رسالة المستخدم الحالية:\n" + message;
 
-      const requestBody = { model: MODEL, input };
+      const requestBody = {
+        model: MODEL,
+        input,
+        system_instruction: SYSTEM_INSTRUCTION,
+        store: false
+      };
       if (body?.webSearch === true) requestBody.tools = [{ type: "google_search" }];
 
       try {
@@ -80,13 +90,15 @@ export default {
           method: "POST",
           headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(60000)
+          signal: AbortSignal.timeout(50000)
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
           const providerMessage = payload?.error?.message || payload?.message || "تعذر الاتصال بخدمة Gemini.";
+          console.error("NEX Gemini API error", response.status, payload?.error?.status || "unknown");
           return json({
             error: providerMessage,
+            stage: "gemini-provider",
             providerStatus: response.status,
             providerCode: payload?.error?.status || payload?.error?.code || null,
             hint: response.status === 429 ? "تجاوزت حصة الاستخدام مؤقتاً؛ انتظر قليلاً ثم أعد المحاولة." : undefined
@@ -94,8 +106,10 @@ export default {
         }
         const answer = extractOutput(payload);
         if (!answer) {
+          console.error("NEX empty Gemini output", payload?.status, Object.keys(payload || {}));
           return json({
-            error: "وصل رد من Gemini لكن لم نعثر على نص الإجابة.",
+            error: "وصل رد من Gemini دون نص إجابة واضح.",
+            stage: "empty-model-output",
             interactionStatus: payload?.status || null,
             responseShape: Object.keys(payload || {})
           }, 502, cors);
@@ -108,10 +122,12 @@ export default {
         }, 200, cors);
       } catch (error) {
         const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
+        console.error("NEX Gemini request failed", error?.name || "FetchError");
         return json({
           error: timedOut
-            ? "استغرق رد Gemini أكثر من دقيقة. أعد المحاولة بعد قليل."
-            : "تعذر الوصول إلى خدمة Gemini. تحقق من الإنترنت ثم أعد المحاولة.",
+            ? "تأخر رد Gemini أكثر من 50 ثانية. أعد المحاولة."
+            : "تعذر الوصول إلى خدمة Gemini. تحقق من اتصال الخادم.",
+          stage: timedOut ? "provider-timeout" : "provider-network",
           diagnostic: error?.name || "FetchError"
         }, 502, cors);
       }
