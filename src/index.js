@@ -19,17 +19,28 @@ function corsHeaders(request) {
   };
 }
 
-function getAnswer(payload) {
-  return (payload?.candidates?.[0]?.content?.parts || [])
-    .filter(part => typeof part.text === "string")
-    .map(part => part.text)
-    .join("\n").trim();
+function extractOutput(payload) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text.trim();
+  const texts = [];
+  for (const step of payload?.steps || []) {
+    if (step?.type !== "model_output") continue;
+    for (const part of step?.content || []) {
+      if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
+    }
+  }
+  return texts.join("\n").trim();
 }
 
-function getCitations(payload) {
-  const chunks = payload?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-  const refs = chunks.map(chunk => chunk.web).filter(web => web?.uri)
-    .map(web => ({ title: web.title || web.uri, url: web.uri }));
+function extractCitations(payload) {
+  const refs = [];
+  for (const step of payload?.steps || []) {
+    for (const part of step?.content || []) {
+      for (const annotation of part?.annotations || []) {
+        const citation = annotation?.url_citation || annotation;
+        if (citation?.url) refs.push({ title: citation.title || citation.url, url: citation.url });
+      }
+    }
+  }
   return [...new Map(refs.map(ref => [ref.url, ref])).values()].slice(0, 8);
 }
 
@@ -40,7 +51,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/api/health" && request.method === "GET") {
-      return json({ ok: true, app: "NEX AI", model: MODEL, apiKeyConfigured: Boolean(env.GEMINI_API_KEY) }, 200, cors);
+      return json({ ok: true, app: "NEX AI", model: MODEL, api: "interactions", apiKeyConfigured: Boolean(env.GEMINI_API_KEY) }, 200, cors);
     }
 
     if (url.pathname === "/api/chat" && request.method === "POST") {
@@ -52,55 +63,56 @@ export default {
       if (!message) return json({ error: "اكتب رسالتك أولاً." }, 400, cors);
       if (message.length > 12000) return json({ error: "الرسالة طويلة جداً. اختصرها قليلاً." }, 413, cors);
 
-      const history = Array.isArray(body?.history) ? body.history.slice(-12) : [];
-      const contents = history
+      const history = Array.isArray(body?.history) ? body.history.slice(-10) : [];
+      const transcript = history
         .filter(item => item && ["user", "assistant"].includes(item.role) && typeof item.content === "string")
-        .map(item => ({
-          role: item.role === "assistant" ? "model" : "user",
-          parts: [{ text: item.content.slice(0, 5000) }]
-        }));
-      contents.push({ role: "user", parts: [{ text: message }] });
+        .map(item => (item.role === "assistant" ? "NEX AI" : "المستخدم") + ": " + item.content.slice(0, 3000))
+        .join("\n\n");
+      const input = SYSTEM_INSTRUCTION + "\n\n" +
+        (transcript ? "سياق المحادثة السابقة:\n" + transcript + "\n\n" : "") +
+        "رسالة المستخدم الحالية:\n" + message;
 
-      const requestBody = {
-        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-        contents,
-        generationConfig: { maxOutputTokens: 2048 }
-      };
-      if (body?.webSearch === true) requestBody.tools = [{ google_search: {} }];
+      const requestBody = { model: MODEL, input };
+      if (body?.webSearch === true) requestBody.tools = [{ type: "google_search" }];
 
       try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-            body: JSON.stringify(requestBody),
-            signal: AbortSignal.timeout(45000)
-          }
-        );
+        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(60000)
+        });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-          const providerMessage = payload?.error?.message || "تعذر الاتصال بخدمة Gemini.";
+          const providerMessage = payload?.error?.message || payload?.message || "تعذر الاتصال بخدمة Gemini.";
           return json({
             error: providerMessage,
             providerStatus: response.status,
+            providerCode: payload?.error?.status || payload?.error?.code || null,
             hint: response.status === 429 ? "تجاوزت حصة الاستخدام مؤقتاً؛ انتظر قليلاً ثم أعد المحاولة." : undefined
           }, response.status === 429 ? 429 : 502, cors);
         }
-        const answer = getAnswer(payload);
-        if (!answer) return json({ error: "لم يُرجع النموذج نصاً. حاول برسالة أقصر." }, 502, cors);
+        const answer = extractOutput(payload);
+        if (!answer) {
+          return json({
+            error: "وصل رد من Gemini لكن لم نعثر على نص الإجابة.",
+            interactionStatus: payload?.status || null,
+            responseShape: Object.keys(payload || {})
+          }, 502, cors);
+        }
         return json({
           answer,
-          citations: getCitations(payload),
-          model: payload?.modelVersion || MODEL,
-          responseId: payload?.responseId || null
+          citations: extractCitations(payload),
+          model: payload?.model || MODEL,
+          responseId: payload?.id || null
         }, 200, cors);
       } catch (error) {
         const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
         return json({
           error: timedOut
-            ? "استغرق رد Gemini وقتاً أطول من المعتاد. أعد المحاولة بعد قليل."
-            : "تعذر الوصول إلى خدمة Gemini. تحقق من الإنترنت ثم أعد المحاولة."
+            ? "استغرق رد Gemini أكثر من دقيقة. أعد المحاولة بعد قليل."
+            : "تعذر الوصول إلى خدمة Gemini. تحقق من الإنترنت ثم أعد المحاولة.",
+          diagnostic: error?.name || "FetchError"
         }, 502, cors);
       }
     }
