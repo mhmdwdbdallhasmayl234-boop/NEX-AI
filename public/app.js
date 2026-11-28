@@ -5,7 +5,7 @@ let busy = false;
 
 function toast(message) {
   const el = $("toast"); el.textContent = message; el.classList.add("show");
-  setTimeout(() => el.classList.remove("show"), 2600);
+  setTimeout(() => el.classList.remove("show"), 4500);
 }
 function addMessage(role, text, citations = []) {
   $("welcome").hidden = true;
@@ -38,15 +38,23 @@ async function sendMessage(text) {
   if (!text || busy) return;
   addMessage("user", text); history.push({ role: "user", content: text });
   input.value = ""; input.style.height = "auto"; setBusy(true);
-  const pending = addMessage("assistant", "NEX AI يجهّز الرد...");
+  const pending = addMessage("assistant", "NEX AI يتصل بالخادم...");
   pending.querySelector(".bubble").classList.add("typing");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 58000);
   try {
     const response = await fetch("/api/chat", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message: text, history: history.slice(0, -1), webSearch: $("webSearch").checked })
+      body: JSON.stringify({ message: text, history: history.slice(0, -1), webSearch: $("webSearch").checked }),
+      signal: controller.signal,
+      cache: "no-store"
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "حدث خطأ أثناء إرسال الرسالة.");
+    if (!response.ok) {
+      const detail = data.providerStatus ? " (رمز الخدمة: " + data.providerStatus + ")" : "";
+      throw new Error((data.error || "حدث خطأ أثناء إرسال الرسالة.") + detail);
+    }
+    if (typeof data.answer !== "string" || !data.answer.trim()) throw new Error("وصل رد فارغ من الخادم. أعد المحاولة.");
     pending.querySelector(".bubble").textContent = data.answer;
     pending.querySelector(".bubble").classList.remove("typing");
     if (data.citations?.length) {
@@ -61,9 +69,14 @@ async function sendMessage(text) {
     }
     history.push({ role: "assistant", content: data.answer });
   } catch (error) {
-    pending.remove(); toast(error.message || "تعذر الاتصال بالخادم.");
+    const message = error.name === "AbortError" ? "انتهت مهلة الاتصال بعد 58 ثانية. تحقق من الخادم ثم أعد المحاولة." : (error.message || "تعذر الاتصال بالخادم.");
+    const bubble = pending.querySelector(".bubble");
+    bubble.textContent = "تعذر الحصول على الرد: " + message;
+    bubble.classList.remove("typing");
+    bubble.style.borderColor = "#a85b68";
+    toast(message);
     history.pop();
-  } finally { setBusy(false); input.focus(); }
+  } finally { clearTimeout(timer); setBusy(false); input.focus(); }
 }
 form.addEventListener("submit", e => { e.preventDefault(); sendMessage(input.value); });
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 170) + "px"; });
