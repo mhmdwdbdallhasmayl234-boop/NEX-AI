@@ -1,4 +1,5 @@
 const MODEL = "gemini-3.8-flash";
+const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const SYSTEM_INSTRUCTION = `أنت NEX AI، مساعد ذكي عربي موثوق. أجب بلغة المستخدم، وافهم اللهجة السودانية واستخدمها بلطف عندما تناسب السياق.
 كن دقيقاً وواضحاً ومنظماً. لا تخترع معلومات أو مصادر أو روابط. إذا لم تكن متأكداً فقل ذلك بوضوح.
 عند الأسئلة التي تتطلب معلومات حديثة، استخدم أداة بحث Google إذا كانت متاحة، وميّز بين الحقائق والاستنتاجات.
@@ -86,13 +87,36 @@ export default {
       if (body?.webSearch === true) requestBody.tools = [{ type: "google_search" }];
 
       try {
-        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-          body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(50000)
-        });
-        const payload = await response.json().catch(() => ({}));
+        const callGemini = async (model) => {
+          const requestBody = {
+            model,
+            input,
+            system_instruction: SYSTEM_INSTRUCTION,
+            store: false
+          };
+          if (body?.webSearch === true) requestBody.tools = [{ type: "google_search" }];
+          const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(45000)
+          });
+          const payload = await response.json().catch(() => ({}));
+          return { response, payload };
+        };
+
+        let usedModel = MODEL;
+        let result = await callGemini(MODEL);
+
+        // If the primary model is temporarily overloaded, automatically try the
+        // lower-latency Flash-Lite model so the user can still receive an answer.
+        if (result.response.status === 503 || result.response.status === 429) {
+          console.warn("NEX primary model busy; trying fallback", result.response.status);
+          usedModel = FALLBACK_MODEL;
+          result = await callGemini(FALLBACK_MODEL);
+        }
+
+        const { response, payload } = result;
         if (!response.ok) {
           const providerMessage = payload?.error?.message || payload?.message || "تعذر الاتصال بخدمة Gemini.";
           console.error("NEX Gemini API error", response.status, payload?.error?.status || "unknown");
@@ -101,7 +125,12 @@ export default {
             stage: "gemini-provider",
             providerStatus: response.status,
             providerCode: payload?.error?.status || payload?.error?.code || null,
-            hint: response.status === 429 ? "تجاوزت حصة الاستخدام مؤقتاً؛ انتظر قليلاً ثم أعد المحاولة." : undefined
+            attemptedModels: [MODEL, ...(usedModel === FALLBACK_MODEL ? [FALLBACK_MODEL] : [])],
+            hint: response.status === 503
+              ? "خدمة Gemini مشغولة مؤقتاً؛ حاول بعد قليل."
+              : response.status === 429
+                ? "تجاوزت حصة الاستخدام مؤقتاً؛ انتظر قليلاً ثم أعد المحاولة."
+                : undefined
           }, response.status === 429 ? 429 : 502, cors);
         }
         const answer = extractOutput(payload);
@@ -117,9 +146,11 @@ export default {
         return json({
           answer,
           citations: extractCitations(payload),
-          model: payload?.model || MODEL,
-          responseId: payload?.id || null
+          model: payload?.model || usedModel,
+          responseId: payload?.id || null,
+          fallbackUsed: usedModel === FALLBACK_MODEL
         }, 200, cors);
+      }
       } catch (error) {
         const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
         console.error("NEX Gemini request failed", error?.name || "FetchError");
