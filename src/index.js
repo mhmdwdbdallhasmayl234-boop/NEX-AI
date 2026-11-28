@@ -21,6 +21,39 @@ function corsHeaders(request) {
   };
 }
 
+
+async function callOpenRouter(env, message, history) {
+  if (!env.OPENROUTER_API_KEY) return { ok: false, status: 503, error: "OpenRouter key is not configured." };
+  const messages = [
+    { role: "system", content: SYSTEM_INSTRUCTION },
+    ...history
+      .filter(item => item && ["user", "assistant"].includes(item.role) && typeof item.content === "string")
+      .map(item => ({ role: item.role, content: item.content.slice(0, 3000) })),
+    { role: "user", content: message }
+  ];
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+      "http-referer": "https://nex-robin-2026.workers.dev",
+      "x-title": "NEX AI"
+    },
+    body: JSON.stringify({
+      model: "openrouter/free",
+      messages,
+      temperature: 0.7,
+      max_tokens: 1800
+    }),
+    signal: AbortSignal.timeout(45000)
+  });
+  const payload = await response.json().catch(() => ({}));
+  const answer = payload?.choices?.[0]?.message?.content;
+  return { ok: response.ok && typeof answer === "string" && answer.trim().length > 0,
+    status: response.status, answer: typeof answer === "string" ? answer.trim() : "",
+    error: payload?.error?.message || "OpenRouter did not return an answer." };
+}
+
 function extractOutput(payload) {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text.trim();
   const texts = [];
@@ -118,6 +151,20 @@ export default {
           const fallback = usedModel === FALLBACK_MODEL ? MODEL : FALLBACK_MODEL;
           usedModel = fallback;
           result = await callGemini(fallback);
+        }
+
+        // If Gemini is unavailable or quota-limited, use OpenRouter for ordinary chat.
+        if (!result.response.ok && !body?.webSearch && [429, 500, 502, 503, 504].includes(result.response.status)) {
+          console.warn("NEX Gemini unavailable; trying OpenRouter", result.response.status);
+          try {
+            const backup = await callOpenRouter(env, message, history);
+            if (backup.ok) {
+              return json({ answer: backup.answer, citations: [], model: "openrouter/free", provider: "openrouter", fallbackUsed: true }, 200, cors);
+            }
+            console.error("NEX OpenRouter fallback failed", backup.status);
+          } catch (backupError) {
+            console.error("NEX OpenRouter fallback request failed", backupError?.name || "FetchError");
+          }
         }
 
         const { response, payload } = result;
