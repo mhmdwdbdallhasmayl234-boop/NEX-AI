@@ -72,7 +72,7 @@ async function searchDuckDuckGo(query) {
   if (!response.ok) throw new Error("Search provider status " + response.status);
   const html = await response.text();
   const results = [];
-  const blocks = html.match(/<div[^>]*class="result[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/div>/gi) || [];
+  const blocks = html.split('class="result').slice(1).map(part => part.split("</div></div>")[0]);
   for (const block of blocks) {
     const linkMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
     const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/[^>]+>/i);
