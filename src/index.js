@@ -54,7 +54,52 @@ async function callOpenRouter(env, message, history) {
     error: payload?.error?.message || "OpenRouter did not return an answer." };
 }
 
-function extractOutput(payload) {
+
+function cleanSearchText(value) {
+  return String(value || "").replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&#(\\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\\s+/g, " ").trim();
+}
+
+async function searchDuckDuckGo(query) {
+  const endpoint = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query);
+  const response = await fetch(endpoint, {
+    headers: { "user-agent": "Mozilla/5.0 (compatible; NEXAI/1.0)", "accept": "text/html" },
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!response.ok) throw new Error("Search provider status " + response.status);
+  const html = await response.text();
+  const results = [];
+  const blocks = html.match(/<div[^>]*class="result[^"]*"[^>]*>[\\s\\S]*?<\\/div>\\s*<\\/div>/gi) || [];
+  for (const block of blocks) {
+    const linkMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\\s\\S]*?)<\\/a>/i);
+    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\\s\\S]*?)<\\/[^>]+>/i);
+    if (!linkMatch) continue;
+    let link = linkMatch[1].replace(/&amp;/g, "&");
+    try {
+      const parsed = new URL(link, "https://duckduckgo.com");
+      const redirected = parsed.searchParams.get("uddg");
+      if (redirected) link = redirected;
+    } catch {}
+    if (!/^https?:\\/\\//i.test(link)) continue;
+    results.push({ title: cleanSearchText(linkMatch[2]), url: link, snippet: cleanSearchText(snippetMatch?.[1] || "") });
+    if (results.length >= 6) break;
+  }
+  return results;
+}
+
+async function answerWithSearchFallback(env, message, history) {
+  const results = await searchDuckDuckGo(message);
+  if (!results.length) return { ok: false, reason: "لم يعثر محرك البحث البديل على نتائج قابلة للاستخدام." };
+  const sourceText = results.map((r, i) => `${i + 1}. ${r.title}\\n${r.snippet}\\nالرابط: ${r.url}`).join("\\n\\n");
+  const prompt = "أجب عن سؤال المستخدم بالاعتماد على نتائج البحث التالية. لا تضف حقائق غير مدعومة، واذكر الروابط التي اعتمدت عليها في قسم المصادر. إذا كانت النتائج غير كافية فصرّح بذلك.\\n\\nسؤال المستخدم: " + message + "\\n\\nنتائج البحث:\\n" + sourceText;
+  const answer = await callOpenRouter(env, prompt, history);
+  if (!answer.ok) return { ok: false, reason: "تعذر توليد إجابة من نتائج البحث." };
+  return { ok: true, answer: answer.answer, citations: results.map(r => ({ title: r.title, url: r.url })) };
+}
+\nfunction extractOutput(payload) {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text.trim();
   const texts = [];
   for (const step of payload?.steps || []) {
@@ -169,6 +214,17 @@ export default {
         }
 
         const { response, payload } = result;
+        if (!response.ok && body?.webSearch && [401, 403, 429, 500, 502, 503, 504].includes(response.status)) {
+          console.warn("NEX Gemini search unavailable; trying independent search", response.status);
+          try {
+            const backup = await answerWithSearchFallback(env, message, history);
+            if (backup.ok) {
+              return json({ answer: backup.answer, citations: backup.citations, model: "openrouter/free", provider: "openrouter+duckduckgo", fallbackUsed: true }, 200, cors);
+            }
+          } catch (searchError) {
+            console.error("NEX independent search fallback failed", searchError?.name || "SearchError");
+          }
+        }
         if (!response.ok) {
           const providerMessage = payload?.error?.message || payload?.message || "تعذر الاتصال بخدمة Gemini.";
           console.error("NEX Gemini API error", response.status, payload?.error?.status || "unknown");
