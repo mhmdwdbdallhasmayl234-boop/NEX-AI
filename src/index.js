@@ -150,7 +150,6 @@ export default {
           responseId: payload?.id || null,
           fallbackUsed: usedModel === FALLBACK_MODEL
         }, 200, cors);
-      }
       } catch (error) {
         const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
         console.error("NEX Gemini request failed", error?.name || "FetchError");
